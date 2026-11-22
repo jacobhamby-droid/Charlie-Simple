@@ -33,11 +33,16 @@ public:
     Wire.write(0x00);
     if (Wire.endTransmission(false) != 0) return false;
     if (Wire.requestFrom(0x5A, 7) != 7) return false;
-    uint8_t buf[7];
-    for (int i = 0; i < 7; i++) buf[i] = Wire.read();
-    if ((buf[0] & 0x0F) == 0) return false;
-    *x = ((uint16_t)(buf[1] & 0x0F) << 8) | buf[2];
-    *y = ((uint16_t)(buf[3] & 0x0F) << 8) | buf[4];
+    uint8_t b0 = Wire.read();
+    uint8_t b1 = Wire.read();
+    uint8_t b2 = Wire.read();
+    uint8_t b3 = Wire.read();
+    uint8_t b4 = Wire.read();
+    Wire.read();
+    Wire.read();
+    if ((b0 & 0x0F) == 0) return false;
+    *x = ((uint16_t)(b1 & 0x0F) << 8) | b2;
+    *y = ((uint16_t)(b3 & 0x0F) << 8) | b4;
     return (*x < 466 && *y < 466);
   }
 };
