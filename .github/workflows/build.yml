@@ -1,0 +1,23 @@
+name: Build Charlie Test
+on: [push]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install PlatformIO & Build
+        run: |
+          pip install platformio
+          pio run
+      - name: Upload Firmware File
+        uses: actions/upload-artifact@v4
+        with:
+          name: charlie-test-firmware
+          path: |
+            .pio/build/charlie-175/bootloader.bin
+            .pio/build/charlie-175/partitions.bin
+            .pio/build/charlie-175/firmware.bin
