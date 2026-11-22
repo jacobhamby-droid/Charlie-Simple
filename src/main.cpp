@@ -9,13 +9,14 @@
 
 LGFX_Charlie lcd;
 XPowersPMU pmu;
-Arduino_Canvas* canvas = nullptr;
 
 float lookX = 0, lookY = 0;
 float targetX = 0, targetY = 0;
 float lidUpper = 0.08f, lidLower = 0.04f, lidAngle = 0.0f;
 float rollDeg = 0.0f;
 float breath = 0.0f;
+
+int prevLx = 159, prevLy = 229, prevRx = 307, prevRy = 229;
 
 bool blinking = false;
 float blinkP = 0.0f;
@@ -33,7 +34,6 @@ uint32_t touchStartMs = 0;
 static void wakeHardware() {
   Wire.begin(15, 14);
 
-  // Power up AXP2101 AMOLED & touch rails
   if (pmu.begin(Wire, AXP2101_SLAVE_ADDRESS, 15, 14)) {
     pmu.setALDO1Voltage(3300); pmu.enableALDO1();
     pmu.setALDO2Voltage(3300); pmu.enableALDO2();
@@ -45,43 +45,47 @@ static void wakeHardware() {
     delay(50);
   }
 
-  // Release TCA9554 display & touch resets
   Wire.beginTransmission(0x20); Wire.write(0x03); Wire.write(0x00); Wire.endTransmission();
   Wire.beginTransmission(0x20); Wire.write(0x01); Wire.write(0x00); Wire.endTransmission();
   delay(50);
   Wire.beginTransmission(0x20); Wire.write(0x01); Wire.write(0xFF); Wire.endTransmission();
   delay(120);
 
-  // Wake QMI8658 motion sensor
   Wire.beginTransmission(QMI8658_ADDR); Wire.write(0x02); Wire.write(0x60); Wire.endTransmission();
   Wire.beginTransmission(QMI8658_ADDR); Wire.write(0x03); Wire.write(0x25); Wire.endTransmission();
   Wire.beginTransmission(QMI8658_ADDR); Wire.write(0x08); Wire.write(0x03); Wire.endTransmission();
 }
 
-static void drawEye(int cx, int cy, int w, int h, float uLid, float lLid, float angle, bool happy) {
+static void drawEye(Arduino_GFX* g, int cx, int cy, int w, int h, float uLid, float lLid, float angle, bool happy) {
   int r = w / 3;
-  for (int i = 9; i >= 1; --i) {
-    float a = powf((10 - i) / 10.0f, 1.8f) * 0.45f;
-    uint16_t glowC = canvas->color565(0, (uint8_t)(212 * a), (uint8_t)(255 * a));
-    canvas->fillRoundRect(cx - w/2 - i, cy - h/2 - i, w + i*2, h + i*2, r + i, glowC);
-  }
-  uint16_t mainC = canvas->color565(0, 212, 255);
-  canvas->fillRoundRect(cx - w/2, cy - h/2, w, h, r, mainC);
 
+  // Soft electric-blue perimeter glow
+  for (int i = 7; i >= 1; --i) {
+    float a = powf((8 - i) / 8.0f, 1.8f) * 0.45f;
+    uint16_t glowC = g->color565(0, (uint8_t)(212 * a), (uint8_t)(255 * a));
+    g->fillRoundRect(cx - w/2 - i, cy - h/2 - i, w + i*2, h + i*2, r + i, glowC);
+  }
+
+  // Core electric-blue squircle
+  uint16_t mainC = g->color565(0, 212, 255);
+  g->fillRoundRect(cx - w/2, cy - h/2, w, h, r, mainC);
+
+  // Upper eyelid (flat blink or angled glare)
   if (uLid > 0.01f || fabsf(angle) > 0.5f) {
     int lh = (int)(h * uLid);
     int tilt = (int)(tanf(angle * DEG_TO_RAD) * (w * 0.65f));
-    int x0 = cx - w/2 - 14, x1 = cx + w/2 + 14, yTop = cy - h/2 - 25;
-    canvas->fillTriangle(x0, yTop, x1, yTop, x0, cy - h/2 + lh + tilt, BLACK);
-    canvas->fillTriangle(x1, yTop, x1, cy - h/2 + lh - tilt, x0, cy - h/2 + lh + tilt, BLACK);
+    int x0 = cx - w/2 - 12, x1 = cx + w/2 + 12, yTop = cy - h/2 - 20;
+    g->fillTriangle(x0, yTop, x1, yTop, x0, cy - h/2 + lh + tilt, BLACK);
+    g->fillTriangle(x1, yTop, x1, cy - h/2 + lh - tilt, x0, cy - h/2 + lh + tilt, BLACK);
   }
 
+  // Lower eyelid (happy ^ ^ arch or flat squint)
   if (lLid > 0.01f) {
     int lh = (int)(h * lLid);
     if (happy) {
-      canvas->fillCircle(cx, cy + h/2 + (w/2) - lh, (int)(w * 0.62f), BLACK);
+      g->fillCircle(cx, cy + h/2 + (w/2) - lh, (int)(w * 0.62f), BLACK);
     } else {
-      canvas->fillRect(cx - w/2 - 14, cy + h/2 - lh, w + 28, lh + 20, BLACK);
+      g->fillRect(cx - w/2 - 12, cy + h/2 - lh, w + 24, lh + 18, BLACK);
     }
   }
 }
@@ -91,8 +95,7 @@ void setup() {
   wakeHardware();
   lcd.init();
   lcd.setBrightness(255);
-  canvas = new Arduino_Canvas(466, 466, lcd.gfx);
-  canvas->begin(GFX_SKIP_OUTPUT_BEGIN);
+  lcd.gfx->fillScreen(BLACK);
 }
 
 void loop() {
@@ -117,7 +120,7 @@ void loop() {
     avgMag += (mag - avgMag) * 0.15f;
   }
 
-  // 2. Touch screen (follow finger, pet = happy, quick poke = annoyed)
+  // 2. Touch screen
   int16_t tx, ty;
   if (lcd.getTouch(&tx, &ty)) {
     if (!touching) {
@@ -186,12 +189,20 @@ void loop() {
   float offRx =  74 + lookX * 24.0f;
   float offRy =  -4 + lookY * 18.0f;
 
-  canvas->fillScreen(BLACK);
-  drawEye(233 + (int)(offLx * cR - offLy * sR), 233 + (int)(offLx * sR + offLy * cR),
-          (int)(98 * sc), (int)(126 * sc), lidUpper, lidLower, lidAngle, isHappy);
-  drawEye(233 + (int)(offRx * cR - offRy * sR), 233 + (int)(offRx * sR + offRy * cR),
-          (int)(98 * sc), (int)(126 * sc), lidUpper, lidLower, -lidAngle, isHappy);
-  canvas->flush();
+  int lx = 233 + (int)(offLx * cR - offLy * sR);
+  int ly = 233 + (int)(offLx * sR + offLy * cR);
+  int rx = 233 + (int)(offRx * cR - offRy * sR);
+  int ry = 233 + (int)(offRx * sR + offRy * cR);
 
-  delay(12);
+  // Erase only previous eye boxes so background stays pure OLED black with no flicker
+  lcd.gfx->fillRect(prevLx - 65, prevLy - 82, 130, 164, BLACK);
+  lcd.gfx->fillRect(prevRx - 65, prevRy - 82, 130, 164, BLACK);
+
+  drawEye(lcd.gfx, lx, ly, (int)(98 * sc), (int)(126 * sc), lidUpper, lidLower, lidAngle, isHappy);
+  drawEye(lcd.gfx, rx, ry, (int)(98 * sc), (int)(126 * sc), lidUpper, lidLower, -lidAngle, isHappy);
+
+  prevLx = lx; prevLy = ly;
+  prevRx = rx; prevRy = ry;
+
+  delay(14);
 }
